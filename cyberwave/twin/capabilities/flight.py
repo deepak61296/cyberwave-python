@@ -41,6 +41,35 @@ class FlightHandle:
         self._send("descend", {"distance": distance}, source_type=source_type)
 
     @simulation_level(SimLevel.PLAYGROUND)
+    def arm(self, *, force: bool = False, source_type: Optional[str] = None) -> None:
+        """Arm the motors.
+
+        A vehicle with no arm concept answers ok with an implicit true.
+        """
+        self._send("arm", {"force": True} if force else {}, source_type=source_type)
+
+    @simulation_level(SimLevel.PLAYGROUND)
+    def disarm(self, *, force: bool = False, source_type: Optional[str] = None) -> None:
+        """Disarm the motors.
+
+        A vehicle with no arm concept answers ok with an implicit true.
+        """
+        self._send("disarm", {"force": True} if force else {}, source_type=source_type)
+
+    @simulation_level(SimLevel.PLAYGROUND)
+    def brake(self, *, source_type: Optional[str] = None) -> None:
+        """Stop moving and hold the current position, still in the air."""
+        self._send("brake", {}, source_type=source_type)
+
+    @simulation_level(SimLevel.PLAYGROUND)
+    def kill(self, *, force: bool = False, source_type: Optional[str] = None) -> None:
+        """Cut the motors at once.
+
+        Refused while the vehicle is in the air unless ``force`` is set.
+        """
+        self._send("kill", {"force": True} if force else {}, source_type=source_type)
+
+    @simulation_level(SimLevel.PLAYGROUND)
     def gimbal_rotate(
         self,
         *,

@@ -702,6 +702,64 @@ class FlyingTwin(FlightCapableMixin, LocomoteTwin):
         if resolved == SOURCE_TYPE_SIM_TELE:
             self.set_hovering_status(hovering=True)
 
+    def arm(self, *, force: bool = False, source_type: Optional[str] = None) -> None:
+        """
+        Arm the motors.
+
+        An aircraft with no arm concept (DJI) answers ok with an
+        implicit true, so the call is safe on every drone driver.
+
+        Args:
+            force: Skip the pre-arm checks where the autopilot allows it.
+            source_type: ``"tele"`` / ``"sim_tele"`` (auto-resolved
+                from ``cw.affect()`` if omitted).
+        """
+        self._send_drone_command(
+            "arm",
+            data={"force": True} if force else {},
+            source_type=source_type,
+        )
+
+    def disarm(self, *, force: bool = False, source_type: Optional[str] = None) -> None:
+        """
+        Disarm the motors.
+
+        An aircraft with no arm concept (DJI) answers ok with an
+        implicit true.
+
+        Args:
+            force: Disarm even when the autopilot would refuse.
+            source_type: ``"tele"`` / ``"sim_tele"`` (auto-resolved
+                from ``cw.affect()`` if omitted).
+        """
+        self._send_drone_command(
+            "disarm",
+            data={"force": True} if force else {},
+            source_type=source_type,
+        )
+
+    def brake(self, *, source_type: Optional[str] = None) -> None:
+        """Stop moving and hold the current position, still in the air."""
+        self._send_drone_command("brake", source_type=source_type)
+
+    def kill(self, *, force: bool = False, source_type: Optional[str] = None) -> None:
+        """
+        Cut the motors at once.
+
+        The driver refuses this while the aircraft is in the air
+        unless ``force`` is set. The props stop and it falls.
+
+        Args:
+            force: Cut the motors even in flight.
+            source_type: ``"tele"`` / ``"sim_tele"`` (auto-resolved
+                from ``cw.affect()`` if omitted).
+        """
+        self._send_drone_command(
+            "kill",
+            data={"force": True} if force else {},
+            source_type=source_type,
+        )
+
     # ------------------------------------------------------------------
     # Return-to-home
     # ------------------------------------------------------------------
