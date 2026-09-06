@@ -17,6 +17,9 @@ Covered:
 - return_to_home / cancel_return_to_home / cancel_takeoff /
   cancel_landing / set_home_here / start_compass_calibration /
   stop_compass_calibration / reboot / emergency_stop
+- arm / disarm / brake / kill, with and without ``force``, on the
+  twin shortcut and on the ``twin.flight`` handle, plus the catalog
+  gate that decides whether an autopilot verb may be published
 - gimbal_rotate (default + per-axis + relative + duration)
 - gimbal_recenter sends pitch=0 / mode=absolute (matches the
   ``;`` keyboard binding in ``controller:dji-keyboard:v1``;
@@ -89,6 +92,24 @@ def _make_drone(
     twin = FlyingTwin(client, data)
     twin._prepare_outbound_command = lambda: None  # type: ignore[method-assign]
     return twin, client
+
+
+def _make_drone_with_catalog(supported: list[str]) -> FlyingTwin:
+    """A drone whose twin metadata carries a compiled MQTT catalog."""
+    data = SimpleNamespace(
+        uuid="drone-uuid",
+        name="DJI Mini 4 Pro",
+        asset_uuid="asset-uuid",
+        metadata={
+            "mqtt": {
+                "topics": {"cyberwave/twin/{twin_uuid}/command": {}},
+                "commands": {"supported": supported},
+            }
+        },
+    )
+    twin = FlyingTwin(_make_client(), data)
+    twin._prepare_outbound_command = lambda: None  # type: ignore[method-assign]
+    return twin
 
 
 def _last_command_publish(twin: FlyingTwin) -> tuple[str, dict[str, Any]]:
@@ -179,6 +200,10 @@ class TestAircraftStateCommands:
             ("stop_compass_calibration", "stop_compass_calibration", {}),
             ("reboot", "reboot", {}),
             ("emergency_stop", "emergency_stop", {}),
+            ("arm", "arm", {}),
+            ("disarm", "disarm", {}),
+            ("brake", "brake", {}),
+            ("kill", "kill", {}),
         ],
     )
     def test_each_command_publishes_canonical_envelope(
@@ -193,6 +218,59 @@ class TestAircraftStateCommands:
         assert payload["data"] == expected_data
         assert payload["source_type"] == "tele"
         assert isinstance(payload["timestamp"], float)
+
+
+# ---------------------------------------------------------------------------
+# Motors: arm / disarm / brake / kill
+# ---------------------------------------------------------------------------
+
+
+class TestMotorCommands:
+    @pytest.mark.parametrize("method_name", ["arm", "disarm", "kill"])
+    def test_force_sets_the_data_flag(self, method_name: str):
+        twin, client = _make_drone()
+        getattr(twin, method_name)(force=True)
+
+        _, payload = _last_command_publish(twin)
+        assert payload["command"] == method_name
+        assert payload["data"] == {"force": True}
+
+    @pytest.mark.parametrize("method_name", ["arm", "disarm", "brake", "kill"])
+    def test_flight_handle_publishes_the_same_envelope(self, method_name: str):
+        twin, client = _make_drone()
+        getattr(twin.flight, method_name)()
+
+        topic, payload = _last_command_publish(twin)
+        assert topic == CANONICAL_TOPIC
+        assert payload["command"] == method_name
+        assert payload["data"] == {}
+        assert payload["source_type"] == "tele"
+
+    def test_flight_handle_force_sets_the_data_flag(self):
+        twin, client = _make_drone()
+        twin.flight.kill(force=True)
+
+        _, payload = _last_command_publish(twin)
+        assert payload["data"] == {"force": True}
+
+    @pytest.mark.parametrize("method_name", ["arm", "disarm", "brake", "kill"])
+    def test_catalog_gate_rejects_a_verb_the_driver_never_declared(
+        self, method_name: str
+    ):
+        twin = _make_drone_with_catalog(["takeoff", "land"])
+        with pytest.raises(ValueError, match="not in the MQTT catalog"):
+            getattr(twin, method_name)()
+
+        assert twin._outbound_log == []
+
+    @pytest.mark.parametrize("method_name", ["arm", "disarm", "brake", "kill"])
+    def test_catalog_gate_passes_a_declared_verb(self, method_name: str):
+        twin = _make_drone_with_catalog(["arm", "disarm", "brake", "kill"])
+        getattr(twin, method_name)()
+
+        topic, payload = _last_command_publish(twin)
+        assert topic == CANONICAL_TOPIC
+        assert payload["command"] == method_name
 
 
 # ---------------------------------------------------------------------------
