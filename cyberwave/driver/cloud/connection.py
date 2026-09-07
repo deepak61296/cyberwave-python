@@ -11,8 +11,7 @@ the :class:`~cyberwave.Cyberwave` SDK client; the driver template only decides
 ``RECONNECT_MAX_ATTEMPTS``/``RECONNECT_BACKOFF_BASE``/``RECONNECT_BACKOFF_MAX``,
 ``registry_id``, ``twin_uuid``, ``_emit_driver_info``,
 ``_sync_lifecycle_alerts_after_connect``, ``_transition_to``, ``on_reconnect``,
-``_wire_interface_from_registry``/``_unwire_interface_from_registry``/
-``_activate_registry_zenoh``.
+``_rewire_interface_from_registry``/``_activate_registry_zenoh``.
 """
 
 from __future__ import annotations
@@ -262,8 +261,7 @@ class CloudConnectionMixin:
 
                 if success:
                     self._connection_lost.clear()
-                    await self._unwire_interface_from_registry()
-                    await self._wire_interface_from_registry()
+                    await self._rewire_interface_from_registry()
                     await self._activate_registry_zenoh()
                     self._transition_to(DriverLifecycleState.ACTIVE)
                     logger.info(

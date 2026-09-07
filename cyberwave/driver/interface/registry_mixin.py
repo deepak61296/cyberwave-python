@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -239,8 +239,7 @@ class InterfaceRegistryMixin:
         await self.on_exit_operation()
         self._operation_mode = mode
         if self._is_interface_wired():
-            await self._unwire_interface_from_registry()
-            await self._wire_interface_from_registry()
+            await self._rewire_interface_from_registry()
         if hasattr(self, "_ros_forward_handles"):
             from ..ros2.ros_publishers import unwire_ros_publishers, wire_ros_publishers
 
@@ -468,14 +467,37 @@ class InterfaceRegistryMixin:
             # run_async's finally block.
             self._wired_mqtt_handlers.clear()
             return
-        mqtt = cw.mqtt
-        for path, _handler in self._wired_mqtt_handlers:
+        self._unsubscribe_mqtt_paths(path for path, _handler in self._wired_mqtt_handlers)
+        self._wired_mqtt_handlers.clear()
+
+    async def _rewire_interface_from_registry(self) -> None:
+        """Re-wire for the current operation mode without a gap on shared topics.
+
+        ``mqtt.subscribe`` replaces a topic's handler in place, so the command
+        topic keeps its broker subscription while the dispatch table is swapped:
+        a command arriving mid-switch reaches the old or the new handler, never
+        nobody. Topics the new mode no longer listens on are unsubscribed only
+        after the new handlers are in.
+        """
+        previous = list(self._wired_mqtt_handlers)
+        await self._teardown_zenoh_registry()
+        await self._wire_interface_from_registry()
+        fresh = self._wired_mqtt_handlers[len(previous):]
+        live = {path for path, _handler in fresh}
+        self._unsubscribe_mqtt_paths(
+            path for path, _handler in previous if path not in live
+        )
+        self._wired_mqtt_handlers[:] = fresh
+
+    def _unsubscribe_mqtt_paths(self, paths: Iterable[str]) -> None:
+        mqtt = self._require_client().mqtt
+        if not hasattr(mqtt, "unsubscribe"):
+            return
+        for path in paths:
             try:
-                if hasattr(mqtt, "unsubscribe"):
-                    mqtt.unsubscribe(path)
+                mqtt.unsubscribe(path)
             except Exception:
                 logger.debug("unsubscribe failed for %s", path, exc_info=True)
-        self._wired_mqtt_handlers.clear()
 
     async def _run_registry_publishers(self) -> None:
         if not self._is_active_for_publishers():
