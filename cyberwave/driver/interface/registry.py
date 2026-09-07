@@ -80,16 +80,21 @@ def resolve_topic_path(
     *,
     prefix: str = "",
 ) -> str:
-    """Resolve a :class:`TopicSpec` to a concrete MQTT topic string."""
+    """Resolve a :class:`TopicSpec` to a concrete MQTT topic string.
+
+    Every template goes through the same substitution, so a namespace/leaf pair
+    the slug map does not know (``twin/position``, ``twin/rotation``, ...)
+    resolves to the twin uuid instead of publishing to the literal
+    ``{twin_uuid}`` placeholder.
+    """
     if topic.topic_slug is not None:
-        slug = topic.topic_slug.replace("{twin_uuid}", twin_uuid)
+        template = topic.topic_slug
     else:
         assert topic.namespace is not None and topic.leaf is not None
         template = _load_slug_map().get((topic.namespace, topic.leaf))
         if template is None:
-            slug = _leaf_to_slug(topic.namespace, topic.leaf)
-        else:
-            slug = template.replace("{twin_uuid}", twin_uuid)
+            template = _leaf_to_slug(topic.namespace, topic.leaf)
+    slug = template.replace("{twin_uuid}", twin_uuid)
     return f"{prefix}{slug}"
 
 
