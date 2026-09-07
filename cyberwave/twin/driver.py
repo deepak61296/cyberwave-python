@@ -11,6 +11,7 @@ from ..exceptions import CyberwaveError
 from ..manifest.driver_config import (
     JOINT_UPDATE_TOPIC_SLUG,
     TWIN_COMMAND_TOPIC_SLUG,
+    _coerce_mqtt_bundle,
     command_specs,
     extract_mqtt_bundle_from_metadata,
     extract_zenoh_bundle_from_metadata,
@@ -141,7 +142,16 @@ class TwinDriverHandle:
         self._twin._mqtt_catalog_cache = None
 
     def _load_mqtt_bundle(self) -> dict[str, Any] | None:
-        return extract_mqtt_bundle_from_metadata(_get_twin_metadata(self._twin._data))
+        data = self._twin._data
+        bundle = extract_mqtt_bundle_from_metadata(_get_twin_metadata(data))
+        if bundle is not None:
+            return bundle
+        # set_driver_schema stores the compiled catalog in the twin's top-level
+        # mqtt_command_schema field; a twin fetched fresh may carry only that.
+        schema = getattr(data, "mqtt_command_schema", None)
+        if schema is None and isinstance(data, dict):
+            schema = data.get("mqtt_command_schema")
+        return _coerce_mqtt_bundle(schema)
 
     def _load_zenoh_bundle(self) -> dict[str, Any] | None:
         return extract_zenoh_bundle_from_metadata(_get_twin_metadata(self._twin._data))
