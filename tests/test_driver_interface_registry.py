@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -261,3 +264,102 @@ def test_unwire_interface_without_client_does_not_mask_startup_error() -> None:
     bare = _Bare()
     asyncio.run(bare._unwire_interface_from_registry())  # must not raise
     assert bare._wired_mqtt_handlers == []
+
+
+_CMD_TOPIC = "cyberwave/twin/twin-uuid/command"
+_JOINT_TOPIC = "cyberwave/joint/twin-uuid/update"
+
+
+class _FakeMqtt:
+    """Just enough of cyberwave.mqtt: one handler slot per topic, replaced in
+    place by a repeat subscribe, dropped by unsubscribe."""
+
+    topic_prefix = ""
+
+    def __init__(self) -> None:
+        self.handlers: dict[str, Callable[[dict[str, Any]], None]] = {}
+        self.events: list[tuple[str, str]] = []
+        self.dropped: list[dict[str, Any]] = []
+        self.in_flight: dict[str, Any] | None = None
+
+    def subscribe(self, topic, handler=None, qos=0, *, no_local=False, subscriber_key=None):
+        self.handlers[topic] = handler
+        self.events.append(("subscribe", topic))
+        self._land_in_flight()
+
+    def unsubscribe(self, topic, subscriber_key=None):
+        self.handlers.pop(topic, None)
+        self.events.append(("unsubscribe", topic))
+        self._land_in_flight()
+
+    def deliver(self, topic: str, envelope: dict[str, Any]) -> None:
+        handler = self.handlers.get(topic)
+        if handler is None:
+            self.dropped.append(envelope)
+        else:
+            handler(envelope)
+
+    def _land_in_flight(self) -> None:
+        # A command that arrives right after the first (un)subscribe of a rewire.
+        if self.in_flight is not None:
+            envelope, self.in_flight = self.in_flight, None
+            self.deliver(_CMD_TOPIC, envelope)
+
+
+class _RewireDriver(InterfaceRegistryMixin):
+    REGISTRY_ID = "acme/test"
+    twin_uuid = "twin-uuid"
+
+    def __init__(self, mqtt: _FakeMqtt) -> None:
+        self._cw = SimpleNamespace(mqtt=mqtt)
+        self.seen: list[str] = []
+        self._init_interface_registry()
+
+    def define_interface(self, iface: DriverInterfaceRegistry) -> None:
+        iface.add_listener(
+            TopicSpec(
+                namespace="twin", leaf="command", payload_schema_ref="TwinCommandPayload"
+            ),
+            CallbackGroup(lambda envelope: self.seen.append(envelope["command"])),
+            command=CommandArgs(name="ping"),
+            operation_modes=frozenset(DriverOperationMode),
+        )
+        # Joint targets only matter while remotely teleoperated.
+        iface.add_listener(
+            TopicSpec(namespace="joint", leaf="update", payload_schema_ref="JointUpdate"),
+            CallbackGroup(lambda _e: None),
+            operation_modes=frozenset({DriverOperationMode.TELEOP_REMOTE}),
+        )
+
+
+def test_mode_switch_keeps_the_command_topic_subscribed() -> None:
+    """Regression: switching operation mode unsubscribed the command topic before
+    resubscribing it, so a command landing in the gap (the first one after a
+    controller attach, a stop, a reconnect, startup) was silently lost."""
+    mqtt = _FakeMqtt()
+    driver = _RewireDriver(mqtt)
+
+    async def _run() -> None:
+        await driver._wire_interface_from_registry()
+        await driver._set_operation_mode(DriverOperationMode.TELEOP_REMOTE)
+        assert set(mqtt.handlers) == {_CMD_TOPIC, _JOINT_TOPIC}
+        mqtt.events.clear()
+
+        # `stop` arrives while the switch back to NO_OP is in flight.
+        mqtt.in_flight = {"command": "ping"}
+        await driver._set_operation_mode(DriverOperationMode.NO_OP)
+        await asyncio.sleep(0.05)
+        assert driver.seen == ["ping"]
+
+        # The new mode's dispatch table is live on the surviving subscription.
+        mqtt.deliver(_CMD_TOPIC, {"command": "ping"})
+        await asyncio.sleep(0.05)
+
+    asyncio.run(_run())
+
+    assert mqtt.dropped == []
+    assert driver.seen == ["ping", "ping"]
+    # Command handler swapped in place; the joint topic dropped only afterwards.
+    assert mqtt.events == [("subscribe", _CMD_TOPIC), ("unsubscribe", _JOINT_TOPIC)]
+    assert set(mqtt.handlers) == {_CMD_TOPIC}
+    assert [path for path, _ in driver._wired_mqtt_handlers] == [_CMD_TOPIC]
