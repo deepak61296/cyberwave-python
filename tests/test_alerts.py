@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cyberwave.alerts import Alert, TwinAlertManager
+from cyberwave.alerts import _REQUEST_TIMEOUT, Alert, TwinAlertManager
 from cyberwave.exceptions import CyberwaveError
 
 
@@ -51,6 +51,21 @@ def test_twin_alert_manager_create_includes_media_when_provided():
 
     _, payload = mock_create.call_args.args
     assert payload["media"] == "https://cdn.example.com/alerts/calibration.gif"
+
+
+def test_alert_requests_carry_a_bounded_timeout():
+    """The driver's FINALIZED notice is a blocking POST on the main thread; an
+    unbounded request on a stalled connection used to hang shutdown forever."""
+    twin = _make_twin()
+    api = twin.client.api.api_client
+    api.param_serialize.return_value = ("POST", "https://api.test/alerts", {}, {}, [])
+    api.response_deserialize.return_value.data = {"uuid": "alert-uuid"}
+
+    TwinAlertManager(twin).create(name="Driver stopped")
+
+    assert api.call_api.call_args.kwargs["_request_timeout"] == _REQUEST_TIMEOUT
+    connect, read = _REQUEST_TIMEOUT
+    assert connect > 0 and read > 0
 
 
 def test_alert_media_property_reads_payload_value():

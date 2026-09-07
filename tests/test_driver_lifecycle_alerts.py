@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 from cyberwave.driver.base import BaseDriver, DriverLifecycleState
 from cyberwave.driver.cloud.alerts import AlertCode
+from cyberwave.exceptions import CyberwaveError
 
 
 def _twin_with_alerts() -> SimpleNamespace:
@@ -79,6 +80,17 @@ def test_transition_to_creates_twin_alert_when_twin_bound() -> None:
     assert kwargs["name"] == "Driver active"
     assert kwargs["alert_type"] == "driver_lifecycle"
     assert driver._lifecycle_twin_pending_notice is False
+
+
+def test_finalized_notice_failure_does_not_escape_shutdown() -> None:
+    twin = _twin_with_alerts()
+    twin.alerts.create.side_effect = CyberwaveError("Failed to create alert: timed out")
+    driver = _MinimalDriver(twin=twin)
+
+    driver._transition_to(DriverLifecycleState.FINALIZED)  # must not raise
+
+    twin.alerts.create.assert_called_once()
+    assert driver._lifecycle_state is DriverLifecycleState.FINALIZED
 
 
 def test_sync_lifecycle_alerts_after_connect_pushes_pending_twin_notice() -> None:
