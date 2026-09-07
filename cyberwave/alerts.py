@@ -390,6 +390,9 @@ class TwinAlertManager:
 # ======================================================================
 
 _AUTH = ["CustomTokenAuthentication"]
+# (connect, read) seconds. Alert calls also run on the driver's shutdown path,
+# where a stalled pooled connection would otherwise hold the process open.
+_REQUEST_TIMEOUT = (5, 30)
 
 
 def _api(client: "Cyberwave") -> Any:
@@ -406,7 +409,7 @@ def _list_alerts(client: "Cyberwave", query: Dict[str, Any]) -> list:
             query_params=query_params,
             auth_settings=_AUTH,
         )
-        response = _api(client).call_api(*_param)
+        response = _api(client).call_api(*_param, _request_timeout=_REQUEST_TIMEOUT)
         response.read()
         return _api(client).response_deserialize(
             response_data=response,
@@ -424,7 +427,7 @@ def _get_alert(client: "Cyberwave", uuid: str) -> Any:
             path_params={"uuid": uuid},
             auth_settings=_AUTH,
         )
-        response = _api(client).call_api(*_param)
+        response = _api(client).call_api(*_param, _request_timeout=_REQUEST_TIMEOUT)
         response.read()
         return _api(client).response_deserialize(
             response_data=response,
@@ -442,7 +445,7 @@ def _create_alert(client: "Cyberwave", payload: Dict[str, Any]) -> Any:
             body=payload,
             auth_settings=_AUTH,
         )
-        response = _api(client).call_api(*_param)
+        response = _api(client).call_api(*_param, _request_timeout=_REQUEST_TIMEOUT)
         response.read()
         return _api(client).response_deserialize(
             response_data=response,
@@ -461,7 +464,7 @@ def _put_alert(client: "Cyberwave", uuid: str, payload: Dict[str, Any]) -> Any:
             body=payload,
             auth_settings=_AUTH,
         )
-        response = _api(client).call_api(*_param)
+        response = _api(client).call_api(*_param, _request_timeout=_REQUEST_TIMEOUT)
         response.read()
         return _api(client).response_deserialize(
             response_data=response,
@@ -479,7 +482,7 @@ def _delete_alert(client: "Cyberwave", uuid: str) -> None:
             path_params={"uuid": uuid},
             auth_settings=_AUTH,
         )
-        response = _api(client).call_api(*_param)
+        response = _api(client).call_api(*_param, _request_timeout=_REQUEST_TIMEOUT)
         response.read()
     except Exception as e:
         raise CyberwaveError(f"Failed to delete alert {uuid}: {e}") from e
@@ -494,7 +497,7 @@ def _post_alert_button(client: "Cyberwave", uuid: str, button_index: int) -> Any
             path_params={"uuid": uuid, "button_index": button_index},
             auth_settings=_AUTH,
         )
-        response = _api(client).call_api(*_param)
+        response = _api(client).call_api(*_param, _request_timeout=_REQUEST_TIMEOUT)
         response.read()
         return _api(client).response_deserialize(
             response_data=response,
@@ -515,7 +518,7 @@ def _post_alert_action(client: "Cyberwave", uuid: str, action: str) -> Any:
             path_params={"uuid": uuid},
             auth_settings=_AUTH,
         )
-        response = _api(client).call_api(*_param)
+        response = _api(client).call_api(*_param, _request_timeout=_REQUEST_TIMEOUT)
         response.read()
         return _api(client).response_deserialize(
             response_data=response,
