@@ -9,7 +9,9 @@ from cyberwave.manifest.driver_config import TWIN_COMMAND_TOPIC_SLUG
 from cyberwave.twin import LocomoteTwin
 
 
-def _make_twin(*, metadata: dict | None = None) -> LocomoteTwin:
+def _make_twin(
+    *, metadata: dict | None = None, mqtt_command_schema: dict | None = None
+) -> LocomoteTwin:
     mqtt = MagicMock()
     mqtt.connected = True
     default_metadata = {
@@ -30,7 +32,8 @@ def _make_twin(*, metadata: dict | None = None) -> LocomoteTwin:
         uuid="twin-uuid",
         name="Bot",
         asset_uuid="asset-uuid",
-        metadata=metadata or default_metadata,
+        metadata=default_metadata if metadata is None else metadata,
+        mqtt_command_schema=mqtt_command_schema,
         capabilities={"can_locomote": True},
     )
     return LocomoteTwin(client, twin_data)
@@ -47,6 +50,33 @@ def test_driver_getters_from_metadata() -> None:
     assert "mqtt" in schemas
     assert "zenoh" in schemas
     assert "move_forward" in schemas["mqtt"]["commands"]["supported"]
+
+
+def test_driver_reads_catalog_from_twin_mqtt_command_schema() -> None:
+    """set_driver_schema persists the catalog in the twin's top-level
+    ``mqtt_command_schema`` field. A twin fetched fresh may carry only that,
+    and used to report no commands at all."""
+    twin = _make_twin(
+        metadata={},
+        mqtt_command_schema={
+            "topics": {TWIN_COMMAND_TOPIC_SLUG: {}},
+            "commands": {"supported": ["takeoff", "land"]},
+        },
+    )
+    assert twin.driver.get_supported_commands() == ["land", "takeoff"]
+    assert TWIN_COMMAND_TOPIC_SLUG in twin.driver.get_supported_topics()
+    assert "takeoff" in twin.driver.get_schemas()["mqtt"]["commands"]["supported"]
+    assert callable(twin.commands.takeoff)
+
+
+def test_driver_metadata_catalog_wins_over_mqtt_command_schema() -> None:
+    twin = _make_twin(
+        mqtt_command_schema={
+            "topics": {TWIN_COMMAND_TOPIC_SLUG: {}},
+            "commands": {"supported": ["takeoff"]},
+        }
+    )
+    assert twin.driver.get_supported_commands() == ["move_forward", "stop"]
 
 
 def test_driver_set_schema_persists_mqtt_and_rebinds_commands() -> None:
