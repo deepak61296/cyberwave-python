@@ -15,8 +15,14 @@ from cyberwave.driver import (
     default_management_commands,
 )
 from cyberwave.driver.interface.args import PublisherArgs, effective_publish_mode
+from cyberwave.driver.interface.registry import resolve_topic_path
 from cyberwave.driver.interface.registry_mixin import InterfaceRegistryMixin
-from cyberwave.manifest.driver_config import TWIN_IMU_TOPIC_SLUG
+from cyberwave.manifest.driver_config import (
+    TWIN_IMU_TOPIC_SLUG,
+    TWIN_POSITION_TOPIC_SLUG,
+)
+
+_TWIN_UUID = "d0d9ec45-a85c-4730-99e9-fb5f3755759c"
 
 
 def test_async_mqtt_handler_runs_on_driver_loop() -> None:
@@ -240,6 +246,53 @@ def test_enable_zenoh_defaults_channel_from_slug() -> None:
         enable_zenoh=True,
     )
     assert imu.resolved_zenoh_channel() == "imu"
+
+
+@pytest.mark.parametrize("leaf", ["position", "rotation"])
+def test_resolve_topic_path_substitutes_uuid_for_unmapped_leaf(leaf: str) -> None:
+    """Regression: pose leaves are not in the slug map and used to publish to the
+    literal ``cyberwave/twin/{twin_uuid}/position`` string, so no pose ever
+    reached the twin. These paths must match what cyberwave/mqtt publishes."""
+    topic = TopicSpec(namespace="twin", leaf=leaf, payload_schema_ref="PosePayload")
+    assert (
+        resolve_topic_path(topic, _TWIN_UUID)
+        == f"cyberwave/twin/{_TWIN_UUID}/{leaf}"
+    )
+    assert "{twin_uuid}" not in resolve_topic_path(topic, _TWIN_UUID)
+
+
+@pytest.mark.parametrize(
+    ("namespace", "leaf", "expected"),
+    [
+        ("twin", "telemetry", f"cyberwave/twin/{_TWIN_UUID}/telemetry"),
+        ("twin", "command", f"cyberwave/twin/{_TWIN_UUID}/command"),
+        ("joint", "update", f"cyberwave/joint/{_TWIN_UUID}/update"),
+    ],
+)
+def test_resolve_topic_path_keeps_mapped_leaves(
+    namespace: str, leaf: str, expected: str
+) -> None:
+    topic = TopicSpec(namespace=namespace, leaf=leaf, payload_schema_ref="X")
+    assert resolve_topic_path(topic, _TWIN_UUID) == expected
+
+
+def test_resolve_topic_path_honours_prefix() -> None:
+    by_leaf = TopicSpec(namespace="twin", leaf="position", payload_schema_ref="X")
+    by_slug = TopicSpec(topic_slug=TWIN_POSITION_TOPIC_SLUG, payload_schema_ref="X")
+    expected = f"dev/cyberwave/twin/{_TWIN_UUID}/position"
+    assert resolve_topic_path(by_leaf, _TWIN_UUID, prefix="dev/") == expected
+    assert resolve_topic_path(by_slug, _TWIN_UUID, prefix="dev/") == expected
+
+
+def test_unmapped_leaf_keeps_the_placeholder_in_the_manifest() -> None:
+    """The exported cw-driver slug stays templated; only the wire path resolves."""
+    registry = DriverInterfaceRegistry()
+    registry.add_publisher(
+        TopicSpec(namespace="twin", leaf="position", payload_schema_ref="PosePayload"),
+        CallbackGroup(lambda: None),
+    )
+    raw = registry.to_cw_driver_dict(registry_id="acme/test")
+    assert raw["mqtt"]["twin"]["position"]["payload_schema_ref"] == "PosePayload"
 
 
 def test_unwire_interface_without_client_does_not_mask_startup_error() -> None:
